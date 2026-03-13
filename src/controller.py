@@ -1,5 +1,6 @@
 import tkinter as tk
 import threading
+import time
 from pynput.keyboard import Controller as KeyboardController
 from face_tracker import FaceTracker
 from configmanager import ConfigManager
@@ -10,6 +11,9 @@ from PIL import Image
 from pygrabber.dshow_graph import FilterGraph
 
 logging.basicConfig(level=logging.INFO)
+
+# Target UI refresh interval in milliseconds (~30 fps)
+_MAIN_LOOP_MS = 33
 
 class Controller:
     def __init__(self, root, config_path):
@@ -22,6 +26,11 @@ class Controller:
         self.flip = False
         self.selected_camera_index = 0  # Initialize selected camera index
 
+        # Thread-safe storage for the latest processed frame and results
+        self._frame_lock = threading.Lock()
+        self._latest_frame = None
+        self._latest_results = None
+
         self.config_manager = ConfigManager(config_file=config_path)
         self.config = self.config_manager.get_config()
 
@@ -33,7 +42,7 @@ class Controller:
         self.init_thread.start()
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.root.after(10, self.main_loop)
+        self.root.after(_MAIN_LOOP_MS, self.main_loop)
 
         # Bind the start/stop key
         self.root.bind(f'<KeyPress-{self.view.start_stop_key_var.get()}>', self.toggle_tracking)
@@ -46,7 +55,7 @@ class Controller:
     def initialize_camera(self):
         try:
             self.face_tracker = FaceTracker(camera_index=self.selected_camera_index, frame_width=self.config["camera_preview_width"], frame_height=self.config["camera_preview_height"])
-            self.capture_thread = threading.Thread(target=self.capture_frames)
+            self.capture_thread = threading.Thread(target=self.capture_and_process_frames)
             self.capture_thread.daemon = True
             self.capture_thread.start()
 
@@ -73,28 +82,40 @@ class Controller:
         self.flip = not self.flip
         if self.flip:
             logging.info("Camera flipped horizontally.")
-            print("Camera flipped horizontally.")
         else:
             logging.info("Camera flipped back to initial.")
-            print("Camera flipped back to initial.")
 
     def on_closing(self):
         self.running = False
         self.root.quit()
         self.root.destroy()
 
-    def capture_frames(self):
+    def capture_and_process_frames(self):
+        """Background thread: capture frames from the camera, run face detection,
+        and store the latest results for the main loop to consume."""
         while self.running:
-            self.face_tracker.capture_frame()
+            ret, frame = self.face_tracker.capture_frame()
+            if not ret:
+                time.sleep(0.005)
+                continue
             if self.flip:
-                self.face_tracker.frame = cv2.flip(self.face_tracker.frame, 1)  # Flip the frame horizontally
+                frame = cv2.flip(frame, 1)
+            # Keep face_tracker.frame in sync so process_frame() uses the right data
+            self.face_tracker.frame = frame
+            results = self.face_tracker.process_frame()
+            with self._frame_lock:
+                self._latest_frame = frame
+                self._latest_results = results
 
     def main_loop(self):
-        if not hasattr(self, 'face_tracker') or not self.face_tracker.ret:
-            self.root.after(10, self.main_loop)
-            return
+        # Grab the latest frame and results captured by the background thread
+        with self._frame_lock:
+            frame = self._latest_frame
+            results = self._latest_results
 
-        results = self.face_tracker.process_frame()
+        if frame is None:
+            self.root.after(_MAIN_LOOP_MS, self.main_loop)
+            return
 
         # Get the positions of the defining lines from the sliders
         left_line_pos = int(round(float(self.view.left_line_slider.get())))
@@ -108,7 +129,7 @@ class Controller:
         # Initialize bounding box variables with default values
         x_min, x_max, y_min, y_max = 0, 0, 0, 0
 
-        if self.tracking_enabled and results.multi_face_landmarks:
+        if self.tracking_enabled and results and results.multi_face_landmarks:
             for face_landmarks in results.multi_face_landmarks:
                 # Get the x-coordinates of the leftmost and rightmost landmarks
                 x_coords = [landmark.x * self.face_tracker.frame_width for landmark in face_landmarks.landmark]
@@ -132,7 +153,7 @@ class Controller:
                         self.current_direction = "Left"
                     self.view.direction_label.config(text="Direction: Left")
                     if self.preview_enabled:
-                        cv2.putText(self.face_tracker.frame, 'Left', (text_x, y_min), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
+                        cv2.putText(frame, 'Left', (text_x, y_min), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
                 elif self.face_tracker.smoothed_face_center_x > right_line_pos:
                     if self.current_direction != "Right":
                         self.keyboard.press(self.view.right_key_var.get())
@@ -140,7 +161,7 @@ class Controller:
                         self.current_direction = "Right"
                     self.view.direction_label.config(text="Direction: Right")
                     if self.preview_enabled:
-                        cv2.putText(self.face_tracker.frame, 'Right', (text_x, y_min), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+                        cv2.putText(frame, 'Right', (text_x, y_min), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
                 else:
                     if self.current_direction != "Center":
                         self.keyboard.release(self.view.left_key_var.get())
@@ -148,7 +169,7 @@ class Controller:
                         self.current_direction = "Center"
                     self.view.direction_label.config(text="Direction: Center")
                     if self.preview_enabled:
-                        cv2.putText(self.face_tracker.frame, 'Center', (text_x, y_min), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
+                        cv2.putText(frame, 'Center', (text_x, y_min), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
 
         else:
             if self.current_direction != "Center":
@@ -161,7 +182,7 @@ class Controller:
             # Resize the frame to fit the canvas
             canvas_width = self.view.canvas.winfo_width()
             canvas_height = self.view.canvas.winfo_height()
-            display_frame = cv2.resize(self.face_tracker.frame, (canvas_width, canvas_height))
+            display_frame = cv2.resize(frame, (canvas_width, canvas_height))
 
             # Draw the lines on the resized frame
             cv2.line(display_frame, (left_line_pos, 0), (left_line_pos, canvas_height), (0, 255, 0), 2)
@@ -174,7 +195,7 @@ class Controller:
             img = Image.fromarray(cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB))
             self.view.update_canvas(img)
 
-        self.root.after(10, self.main_loop)
+        self.root.after(_MAIN_LOOP_MS, self.main_loop)
 
     def set_left_keybind(self):
         key = self.view.left_key_var.get()

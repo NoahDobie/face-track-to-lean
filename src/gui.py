@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
@@ -21,7 +22,7 @@ class GUI:
         root.title("Face Track to Lean by Noah Dobie")
         
         # Set the window icon
-        icon_path = 'src/icons/FTL-Icon.png'
+        icon_path = os.path.join(os.path.dirname(__file__), 'icons', 'FTL-Icon.png')
         icon = tk.PhotoImage(file=icon_path)
         root.iconphoto(False, icon)
 
