@@ -23,7 +23,7 @@ def create_camera_select_frame(root, controller):
     def update_camera_index(event):
         selected_camera = dropdown_list.get()
         controller.selected_camera_index = camera_dict[selected_camera]
-        controller.initialize_camera()  # Reinitialize the camera with the new index
+        controller.switch_camera()
 
     dropdown_list.bind("<<ComboboxSelected>>", update_camera_index)
 

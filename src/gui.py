@@ -58,8 +58,10 @@ class GUI:
         self.root.update_idletasks()
 
     def show_message(self, message="Loading..."):
-        self.canvas.delete("all")  # Clear any existing messages
-        self.loading_label = self.canvas.create_text(320, 240, text=message, font=("Helvetica", 14), fill="white")
+        self.canvas.delete("all")
+        cx = int(self.canvas.cget("width")) // 2
+        cy = int(self.canvas.cget("height")) // 2
+        self.loading_label = self.canvas.create_text(cx, cy, text=message, font=("Helvetica", 14), fill="white")
 
     def hide_message(self):
         self.canvas.delete(self.loading_label)
