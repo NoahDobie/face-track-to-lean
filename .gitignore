@@ -1,5 +1,22 @@
-# Pycache
+# Python
 __pycache__/
+*.pyc
+*.pyd
+
+# Virtual environment
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# PyInstaller
+build/
+dist/
+*.spec
 
 # Output files
 output/
+
+# Claude Code
+.claude/
