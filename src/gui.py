@@ -1,8 +1,14 @@
+import os
+import sys
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
 import ttkbootstrap as ttkb
 from ttkbootstrap.constants import *
+
+def _resource_path(relative_path):
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative_path)
 
 from components.startstop_toggle_frame import create_startstop_toggle_frame
 from components.camera_select_frame import create_camera_select_frame
@@ -21,9 +27,11 @@ class GUI:
         root.title("Face Track to Lean by Noah Dobie")
         
         # Set the window icon
-        icon_path = 'src/icons/FTL-Icon.png'
-        icon = tk.PhotoImage(file=icon_path)
-        root.iconphoto(False, icon)
+        try:
+            icon = tk.PhotoImage(file=_resource_path(os.path.join('icons', 'FTL-Icon.png')))
+            root.iconphoto(False, icon)
+        except Exception:
+            pass
 
         # Apply dark theme
         self.style = ttkb.Style("darkly")
